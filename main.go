@@ -1,37 +1,61 @@
-
 package main
 
 import (
 	"fmt"
-	"net"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
 
 func main() {
-	host := "127.0.0.1"
-	ports := []int{22, 80, 443, 8080}
-	if len(os.Args) > 1 {
-		host = os.Args[1]
+	if len(os.Args) < 2 {
+		fmt.Println("usage: incident-responder <log> [ack|escalate|resolve]")
+		os.Exit(1)
 	}
+	logPath := os.Args[1]
+	action := "ack"
 	if len(os.Args) > 2 {
-		ports = ports[:0]
-		for _, q := range strings.Split(os.Args[2], ",") {
-			if n, err := strconv.Atoi(q); err == nil {
-				ports = append(ports, n)
-			}
+		action = os.Args[2]
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	lines := strings.Split(string(data), "\n")
+	errors, warns := 0, 0
+	for _, line := range lines {
+		upper := strings.ToUpper(line)
+		if strings.Contains(upper, "ERROR") || strings.Contains(upper, "FATAL") {
+			errors++
+		} else if strings.Contains(upper, "WARN") {
+			warns++
 		}
 	}
-	for _, p := range ports {
-		addr := fmt.Sprintf("%s:%d", host, p)
-		c, err := net.DialTimeout("tcp", addr, 2*time.Second)
-		if err != nil {
-			fmt.Printf("%-24s closed\n", addr)
-			continue
+	ts := time.Now().Format(time.RFC3339)
+	switch action {
+	case "ack":
+		fmt.Printf("incident acknowledged at %s\n", ts)
+		fmt.Printf("severity: %s\n", severity(errors, warns))
+		fmt.Printf("errors: %d, warnings: %d\n", errors, warns)
+	case "escalate":
+		if errors > 5 {
+			fmt.Println("ESCALATING to on-call (critical)")
+		} else {
+			fmt.Println("auto-handling (minor)")
 		}
-		fmt.Printf("%-24s open\n", addr)
-		c.Close()
+	case "resolve":
+		fmt.Printf("resolved at %s - %d errors were reviewed\n", ts, errors)
 	}
+}
+
+func severity(e, w int) string {
+	if e > 10 {
+		return "CRITICAL"
+	} else if e > 0 {
+		return "HIGH"
+	} else if w > 0 {
+		return "MEDIUM"
+	}
+	return "LOW"
 }
